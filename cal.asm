@@ -1,26 +1,4 @@
-; “A”——“+”
-; “B”——“-”
-; “C”——“*” 
-; “D”——“括号” 
-; “E”——“=” 
-; “F”——开始运算（包括撤消运算），屏幕显示“0”。
-;
-; 运算要求： 
-;     ⑴ 输入待计算数据（小于四位数），数码管跟随显示。 
-;     ⑵ 按“+”、“-”、“*”或“括号”时，当前显示内容不变。 
-;     ⑶ 再输入数据时，数码管跟随显示。 
-;     ⑷ 按“E”时，显示最终结果数据。若计算结果为奇数，则点亮1个红色发光二极管，并持续以1秒间
-;     隔（硬件实现）闪烁；若计算结果为偶数，则点亮2个绿色发光二极管，并持续以2秒间隔（硬件实现）闪
-;     烁。 
-;     ⑸ 按“F”键：左侧四个数码管中最右边（对应个位数）的一个显示“0”，其余三个不显示内容。
-;     同时熄灭点亮的发光二极管，等待下一次运算的开始。 
-;     ⑹ 需要考虑运算的优先级问题。 
-;     ⑺ 可以只考虑正整数运算，不考虑负数和实数运算。括号可以不考虑嵌套情况，但必须能实现算式
-;     中存在多组平行括号的计算。
-;
-; 设计说明： 
-;     输入数据时，若超出显示范围则不响应超出部分。在计算结果超出显示范围时，则显示“F”。
-
+;硬件工程师综合训练，课题五，最终版代码
 
 code    segment
         assume cs:code
@@ -35,7 +13,7 @@ start:
     port59_1    equ 0ffe5h
     icw1        equ 13H         ; 边沿触发
     icw2        equ 08h         ; 中断类型号 08H 09H ...
-    icw4        equ 09h         ; 全嵌套，缓冲从片，非自动EOI，8086/88模式 为什么要用缓冲单片?
+    icw4        equ 09h         ; 全嵌套，缓冲从片，非自动EOI，8086/88模式 
     ocw1open    equ 0feh        ; IRQ0，类型号为08h
     vectorOffset EQU 20H        ; 中断向量的地址 08H*4=20H
     vectorSeg   EQU 22H         ; 中断向量的CS段地址在中断向量表中的地址，值为0
@@ -52,25 +30,25 @@ start:
     count53_second2  equ 38400       ; 2s计数次数
 
 
-    ledbuf                  db 6 dup(?)
-    led_count               db 0
-    previous_key            db 20h
-    current_key             db 20h
-    has_previous_bracket    db 0
-    has_right_bracket       db 0
-    same_as_pre             db 0
+    ledbuf                  db 6 dup(?) ;存放六个八段数码管的显示码
+    led_count               db 0        ;当前已经输入了几位数字
+    previous_key            db 20h      ;上一个按下的按键
+    current_key             db 20h      ;当前按下的按键
+    has_previous_bracket    db 0        ;是否前面有左括号
+    has_right_bracket       db 0        ;前一个输入符号是否是右括号
+    same_as_pre             db 0        ;当前按下按键和上一按下按键是否相同
 
-    operator_stack          db '#', 100 dup(?)      ; si
-    operand_stack           db 0ffh, 0ffh, 100 dup(?)   ; di
+    operator_stack          db '#', 100 dup(?)      ; 运算符栈，以si为栈顶指针
+    operand_stack           db 0ffh, 0ffh, 100 dup(?)   ; 操作数栈，以di为栈顶指针
 
-    priority                db 0    ; 0 栈顶<下一个; 1 =; 2 >
-    is_save_num             db 0    ; 当按下一个运算符时，current_num是否已经保存，为了处理连输运算符号的错误情况
-    current_num             dw 0
-    display_num             dw 0    ; 按下符号后，会把current_num清零，但不把display_num清零
+    priority                db 0    ; 运算符之间的优先级，0表示栈顶<下一个; 1 =; 2 >
+    is_save_num             db 0    ; 当按下一个运算符时，current_num是否已经保存，为了处理连续输入运算符号的错误情况
+    current_num             dw 0    ; 当前已经输入的数字
+    display_num             dw 0    ; 当前药展示的数字，按下符号后，会把current_num清零，但不把display_num清零
     has_input_e             db 0    ; 统计是否已经按下过e键
     result                  dw 0    ; 总的计算结果
-    overflow                db 0
-    whole_error             db 0
+    overflow                db 0    ; 计算结果溢出标志
+    whole_error             db 0    ; 计算结果出错标志
     
     ; # ( +- *    优先级从小到大
 
@@ -101,16 +79,14 @@ true_start:
         cli
         call init_all
 main:
-        call get_key
+        call get_key             ; 获取当前输入符号
         cmp current_key, 20h
         je handle
         and  al,0fh
     handle:
-        call handle_key
-        ;call set_led_num
-        call disp
+        call handle_key          ; 对输入符号进行处理
+        call disp                ; 对八段数码管进行一次显示
         jmp main
-; end
 
 
 
@@ -253,6 +229,7 @@ flash endp
 
 
 ProcTurnOn proc
+        ; 点亮二极管
         push dx
         push ax
 
@@ -274,6 +251,7 @@ ProcTurnOn proc
 ProcTurnOn endp
 
 ProcTurnOff proc
+        ; 熄灭二极管
         push dx
         push ax
 		
@@ -290,6 +268,7 @@ ProcTurnOff endp
 
 
 ProcWriteCount proc
+        ; 写入计数初值
         mov dx, port53_0  ;第一个计数器通道的端口地址
         test result,1h       ;判断result是否为奇数
         jz second2
@@ -386,56 +365,57 @@ get_key endp
 
 
 handle_key proc
+        ; 对输入进行处理
         push ax
         call is_same_as_pre
-        cmp same_as_pre, 1
-        jne handle_key_continue
+        cmp same_as_pre, 1          ; 先判断当前输入和上一输入是否相同 
+        jne handle_key_continue     ; 不相同时再对当前输入进行处理
         pop ax
         ret
     handle_key_continue:
         mov al, current_key
         cmp al, 10
         jnb handle_key_a
-        call handle_number
+        call handle_number          ; 当前输入是数字时
         pop ax
         ret
     handle_key_a:
         cmp al, 0ah
         jne handle_key_b
-        call handle_a
+        call handle_a               ; 当前输入是‘A’时
         pop ax
         ret
     handle_key_b:
         cmp al, 0bh
         jne handle_key_c
-        call handle_b
+        call handle_b               ; 当前输入是‘B’时
         pop ax
         ret
     handle_key_c:
         cmp al, 0ch
         jne handle_key_d
-        call handle_c
+        call handle_c               ; 当前输入是‘C’时
         pop ax
         ret
     handle_key_d:
         cmp al, 0dh
         jne handle_key_e
-        call handle_d
+        call handle_d                ; 当前输入是‘D’时
         pop ax
         ret
     handle_key_e:
         cmp al, 0eh
         jne handle_key_f
-        call handle_e
+        call handle_e                ; 当前输入是‘E’时
         pop ax
         ret
     handle_key_f:
         cmp al, 0fh
         jne key_error
-        call handle_f
+        call handle_f                ; 当前输入是‘F’时
         jmp handle_key_f_ret
         key_error:
-        call handle_error
+        call handle_error            ; 当前没有输入时
         handle_key_f_ret:
         pop ax
         ret
@@ -443,6 +423,7 @@ handle_key endp
 
 is_same_as_pre proc
     ;给same_as_pre赋值
+    ;比较当前输入和上一输入
         push ax
         mov al, current_key
         cmp al, previous_key
@@ -459,6 +440,7 @@ is_same_as_pre endp
 
 
 handle_number proc
+    ; 处理输入的数字
     ; 如果 led_count < 4
     ;   current_num = current_num * 10 + current_key
     ;   led_count += 1
@@ -535,7 +517,7 @@ handle_a proc
         call get_priority
         cmp priority, 0
         je push_a                           ;当前符号优先级大于栈顶符号，直接入栈
-        call cal_one_op                     ;否则计算一次
+        call cal_one_op                     ;否则计算一次，直到当前符号优先级大于栈顶符号优先级
         jmp calculate_a
     push_a:
         inc si
@@ -553,7 +535,7 @@ handle_b proc
 handle_b endp
 
 handle_c proc
-        call handle_a
+        call handle_a               ; 处理-、*的逻辑和处理+的逻辑相同
         ret
 handle_c endp
 
@@ -628,13 +610,13 @@ handle_e proc
         cmp whole_error, 1
         je show_error
         cmp di, 2
-        ja show_error                    ;计算完成后，运算符栈内剩余数字大于一个时计算结果错误
+        ja show_error                    ;计算完成后，数字栈栈内剩余数字大于一个时计算结果错误
         mov ah, operand_stack[di]
         mov al, operand_stack[di + 1]
         mov display_num, ax
         mov result, ax
 
-        call set_led_num
+        call set_led_num                 ;结果显示在数码管上，点亮二极管，送计数初值，开中断
         sti
         call ProcTurnOn
         call ProcWriteCount
@@ -657,6 +639,8 @@ handle_f endp
 
 
 cal_one_op proc
+        ;进行一次计算：弹出一个运算符和两个操作数计算一次
+        ;同时进行计算出错和溢出判断
         push ax
         push bx
         push dx
@@ -711,6 +695,7 @@ cal_one_op endp
 
 
 get_priority proc
+        ;获得栈顶运算符和当前输入符号的优先级比较结果
         push ax
         push bx
         push dx
@@ -758,6 +743,7 @@ get_priority endp
 
 
 set_led_num proc
+    ;设置ledbuf，从而改变显示在数码管上的内容
     ; 在handle_number里调用时
     ; 此时led_count = 已输入的数字位数
     ; led_count - 1 = 已显示的数字位数
@@ -809,6 +795,7 @@ set_led_num endp
 
 
 disp proc
+        ;将ledbuf的六个显示码送到八段数码管进行显示
         mov  bx,offset LEDBuf
         mov  cl,6               ;共6个八段管
         mov  ah,00100000b       ;从左边开始显示
